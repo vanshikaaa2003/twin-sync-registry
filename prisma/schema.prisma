@@ -1,0 +1,16 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Twin {
+  id           String   @id @default(uuid())
+  specURL      String
+  capabilities String
+  eventMeshURL String   @default("ws://localhost:5000")  // NEW
+  registeredAt DateTime @default(now())
+}
