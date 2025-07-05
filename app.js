@@ -1,21 +1,23 @@
 // core/registry/app.js
 //------------------------------------------------------------
 // Twin Registry  (Express + Prisma + Supabase Auth)
+// CommonJS version – safe for Node on Render
 //------------------------------------------------------------
-import express from "express";
-import cors from "cors";
-import { createClient } from "@supabase/supabase-js";
-import { PrismaClient } from "@prisma/client";
+require("dotenv").config();                // optional: load .env locally
+const express       = require("express");
+const cors          = require("cors");
+const { createClient } = require("@supabase/supabase-js");
+const { PrismaClient } = require("@prisma/client");
 
 console.log("🔍 DATABASE_URL =", process.env.DATABASE_URL);
 
-const prisma    = new PrismaClient();
-const app       = express();
+const prisma  = new PrismaClient();
+const app     = express();
 
-// ─── Supabase admin client (service role key) ───────────────
-const supabase  = createClient(
+// ─── Supabase admin client (service‑role key) ───────────────
+const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY        // **service‑role** key
+  process.env.SUPABASE_SERVICE_KEY   // **service‑role** key (server side only)
 );
 
 //────────────────────────────────────────────────────────────
@@ -46,18 +48,19 @@ app.post("/twin.register", auth, async (req, res) => {
   try {
     const twin = await prisma.twin.create({
       data: {
-        id,                                 // prisma generates UUID if undefined
-        createdBy: req.user.id,             // ① owner!
+        id,                              // Prisma auto‑generates if undefined
+        createdBy: req.user.id,          // owner from JWT
         specURL,
         capabilities: capabilities.join(","),
-        eventMeshURL: "ws://localhost:5000"
+        eventMeshURL:
+          process.env.MESH_WS || "wss://twin-sync-mesh.onrender.com",
       },
     });
 
     res.status(201).json({ ...twin, capabilities });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Database error" });
+    console.error("❌ Failed to create twin:", err);
+    res.status(500).json({ error: "Database error", detail: err.message });
   }
 });
 
@@ -65,10 +68,9 @@ app.post("/twin.register", auth, async (req, res) => {
 // GET /twin.query        → list current user's twins
 //────────────────────────────────────────────────────────────
 app.get("/twin.query", auth, async (req, res) => {
-  console.log("🔍 Handling /twin.query for", req.user.email);
   try {
     const twins = await prisma.twin.findMany({
-      where: { createdBy: req.user.id },    // ② filter by owner
+      where: { createdBy: req.user.id },
     });
     res.json(
       twins.map((t) => ({
@@ -91,7 +93,10 @@ app.get("/twin/:id", auth, async (req, res) => {
   });
   if (!twin) return res.status(404).json({ error: "Not found" });
 
-  res.json({ ...twin, capabilities: twin.capabilities.split(",").filter(Boolean) });
+  res.json({
+    ...twin,
+    capabilities: twin.capabilities.split(",").filter(Boolean),
+  });
 });
 
 //────────────────────────────────────────────────────────────
@@ -127,7 +132,7 @@ app.delete("/twin/:id", auth, async (req, res) => {
 });
 
 //────────────────────────────────────────────────────────────
-// (Optional) alias /twins → same as /twin.query
+// Alias /twins → /twin.query
 //────────────────────────────────────────────────────────────
 app.get("/twins", (_req, res) => res.redirect("/twin.query"));
 
