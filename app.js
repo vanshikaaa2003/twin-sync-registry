@@ -3,7 +3,7 @@
 // Twin Registry  (Express + Prisma + Supabase Auth)
 // CommonJS version – safe for Node on Render
 //------------------------------------------------------------
-require("dotenv").config();                // optional: load .env locally
+               // optional: load .env locally
 const express       = require("express");
 const cors          = require("cors");
 const { createClient } = require("@supabase/supabase-js");
