@@ -75,7 +75,7 @@ app.get("/twin.query", auth, async (req, res) => {
     res.json(
       twins.map((t) => ({
         ...t,
-        capabilities: t.capabilities.split(",").filter(Boolean),
+        capabilities: (t.capabilities ?? "").split(",").filter(Boolean),
       }))
     );
   } catch (err) {
@@ -95,7 +95,7 @@ app.get("/twin/:id", auth, async (req, res) => {
 
   res.json({
     ...twin,
-    capabilities: twin.capabilities.split(",").filter(Boolean),
+    capabilities: (twin.capabilities ?? "").split(",").filter(Boolean),
   });
 });
 
