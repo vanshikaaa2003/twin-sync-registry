@@ -10,12 +10,11 @@ generator client {
 
 model Twin {
   id           String   @id @default(uuid())
-  createdBy    String?
   specURL      String
-  capabilities String
-  eventMeshURL String   @default("ws://localhost:5000")  // NEW
+  capabilities String?
+  eventMeshURL String
   registeredAt DateTime @default(now())
+  createdBy    String?
 
-   @@index([createdBy])
   @@unique([id, createdBy])
 }
