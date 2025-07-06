@@ -15,6 +15,7 @@ model Twin {
   eventMeshURL String
   registeredAt DateTime @default(now())
   createdBy    String?
+  lastTelemetryAt DateTime?   @default(now())
 
   @@unique([id, createdBy])
 }
