@@ -129,6 +129,21 @@ app.put("/twin/:id", auth, async (req, res) => {
   }
 });
 
+// POST /twin/:id/heartbeat  → updates lastTelemetryAt timestamp
+app.post("/twin/:id/heartbeat", auth, async (req, res) => {
+  try {
+    await prisma.twin.update({
+      where: { id_createdBy: { id: req.params.id, createdBy: req.user.id } },
+      data: { lastTelemetryAt: new Date() }
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("❌ Heartbeat error:", err);
+    res.status(400).json({ error: "Heartbeat failed", detail: err.message });
+  }
+});
+
+
 app.delete("/twin/:id", auth, async (req, res) => {
   try {
     await prisma.twin.delete({
