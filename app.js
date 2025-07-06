@@ -3,7 +3,6 @@
 // Twin Registry  (Express + Prisma + Supabase Auth)
 // CommonJS version – safe for Node on Render
 //------------------------------------------------------------
-               // optional: load .env locally
 const express       = require("express");
 const cors          = require("cors");
 const { createClient } = require("@supabase/supabase-js");
@@ -11,13 +10,13 @@ const { PrismaClient } = require("@prisma/client");
 
 console.log("🔍 DATABASE_URL =", process.env.DATABASE_URL);
 
-const prisma  = new PrismaClient();
-const app     = express();
+const prisma   = new PrismaClient();
+const app      = express();
 
 // ─── Supabase admin client (service‑role key) ───────────────
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY   // **service‑role** key (server side only)
+  process.env.SUPABASE_SERVICE_KEY     // service‑role key (server side only)
 );
 
 //────────────────────────────────────────────────────────────
@@ -38,9 +37,33 @@ async function auth(req, res, next) {
 app.use(cors());
 app.use(express.json());
 
-//────────────────────────────────────────────────────────────
-// POST /twin.register   → create one twin
-//────────────────────────────────────────────────────────────
+/* ──────────────────────────────────────────────────────────
+   HEARTBEAT: insert one row every 60 s so we know the
+   registry is alive. Table schema:
+
+     create table heartbeat_logs (
+       id  uuid primary key default uuid_generate_v4(),
+       time timestamptz default now()
+     );
+
+   ────────────────────────────────────────────────────────── */
+async function pingSupabase() {
+  const { error } = await supabase.from("heartbeat_logs").insert({});
+  if (error) {
+    console.error("❌ Heartbeat insert failed:", error.message);
+  } else {
+    console.log("✅ Heartbeat logged");
+  }
+}
+setInterval(pingSupabase, 60_000); // 60s
+
+// (optional) external uptime monitor can call POST /heartbeat
+app.post("/heartbeat", async (_req, res) => {
+  await pingSupabase();
+  res.json({ ok: true });
+});
+
+/* ───────────────────────── Twin routes (unchanged) ─────── */
 app.post("/twin.register", auth, async (req, res) => {
   const { id, specURL, capabilities = [] } = req.body;
   if (!specURL) return res.status(400).json({ error: "specURL is required" });
@@ -48,15 +71,14 @@ app.post("/twin.register", auth, async (req, res) => {
   try {
     const twin = await prisma.twin.create({
       data: {
-        id,                              // Prisma auto‑generates if undefined
-        createdBy: req.user.id,          // owner from JWT
+        id,
+        createdBy: req.user.id,
         specURL,
         capabilities: capabilities.join(","),
         eventMeshURL:
           process.env.MESH_WS || "wss://twin-sync-mesh.onrender.com",
       },
     });
-
     res.status(201).json({ ...twin, capabilities });
   } catch (err) {
     console.error("❌ Failed to create twin:", err);
@@ -64,9 +86,6 @@ app.post("/twin.register", auth, async (req, res) => {
   }
 });
 
-//────────────────────────────────────────────────────────────
-// GET /twin.query        → list current user's twins
-//────────────────────────────────────────────────────────────
 app.get("/twin.query", auth, async (req, res) => {
   try {
     const twins = await prisma.twin.findMany({
@@ -84,9 +103,6 @@ app.get("/twin.query", auth, async (req, res) => {
   }
 });
 
-//────────────────────────────────────────────────────────────
-// GET /twin/:id          → get one twin owned by user
-//────────────────────────────────────────────────────────────
 app.get("/twin/:id", auth, async (req, res) => {
   const twin = await prisma.twin.findFirst({
     where: { id: req.params.id, createdBy: req.user.id },
@@ -99,9 +115,6 @@ app.get("/twin/:id", auth, async (req, res) => {
   });
 });
 
-//────────────────────────────────────────────────────────────
-// PUT /twin/:id          → update twin (only owner)
-//────────────────────────────────────────────────────────────
 app.put("/twin/:id", auth, async (req, res) => {
   const { specURL, capabilities = [] } = req.body;
   try {
@@ -116,9 +129,6 @@ app.put("/twin/:id", auth, async (req, res) => {
   }
 });
 
-//────────────────────────────────────────────────────────────
-// DELETE /twin/:id       → remove twin (only owner)
-//────────────────────────────────────────────────────────────
 app.delete("/twin/:id", auth, async (req, res) => {
   try {
     await prisma.twin.delete({
@@ -131,12 +141,9 @@ app.delete("/twin/:id", auth, async (req, res) => {
   }
 });
 
-//────────────────────────────────────────────────────────────
-// Alias /twins → /twin.query
-//────────────────────────────────────────────────────────────
 app.get("/twins", (_req, res) => res.redirect("/twin.query"));
 
-//────────────────────────────────────────────────────────────
+/* ────────────────────────────────────────────────────────── */
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () =>
   console.log(`🛰️  Twin Registry running on port ${PORT}`)
