@@ -1,7 +1,6 @@
 // core/registry/app.js
 //------------------------------------------------------------
-// Twin Registry  (Express + Prisma + Supabase Auth)
-// CommonJS version – safe for Node on Render
+// Twin Registry  (Express + Prisma + Supabase Auth) – CommonJS
 //------------------------------------------------------------
 const express       = require("express");
 const cors          = require("cors");
@@ -10,67 +9,54 @@ const { PrismaClient } = require("@prisma/client");
 
 console.log("🔍 DATABASE_URL =", process.env.DATABASE_URL);
 
-const prisma  = new PrismaClient({
-  datasources: {
-    db: {
-      url: process.env.DATABASE_URL + "?pgbouncer=true"   // 👈 disables prepared statements
-    }
-  }
+const prisma = new PrismaClient({
+  datasources: { db: { url: process.env.DATABASE_URL + "?pgbouncer=true" } }
 });
-
-const app      = express();
+const app = express();
 
 // ─── Supabase admin client (service‑role key) ───────────────
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY     // service‑role key (server side only)
+  process.env.SUPABASE_SERVICE_KEY
 );
 
 //────────────────────────────────────────────────────────────
-//  Auth middleware  – verifies JWT & attaches req.user
+// Auth helpers
 //────────────────────────────────────────────────────────────
 async function auth(req, res, next) {
   const token = req.headers.authorization?.replace("Bearer ", "");
   if (!token) return res.status(401).json({ error: "Unauthenticated" });
 
   const { data, error } = await supabase.auth.getUser(token);
-  if (error || !data?.user)
-    return res.status(401).json({ error: "Unauthenticated" });
+  if (error || !data?.user) return res.status(401).json({ error: "Unauthenticated" });
 
   req.user = data.user;
   next();
 }
 
+/* NEW: allow mesh to call with x-mesh-token instead of JWT */
+function meshAuth(req, res, next) {
+  const token = req.headers["x-mesh-token"];
+  if (token === process.env.MESH_SERVICE_TOKEN) return next();
+  auth(req, res, next);           // fallback to normal user auth
+}
+
 app.use(cors());
 app.use(express.json());
 
-/* ──────────────────────────────────────────────────────────
-   HEARTBEAT: insert one row every 60 s so we know the
-   registry is alive. Table schema:
-
-     create table heartbeat_logs (
-       id  uuid primary key default uuid_generate_v4(),
-       time timestamptz default now()
-     );
-
-   ────────────────────────────────────────────────────────── */
+/* ─────────────────── Registry heartbeat (every 60 s) ────── */
 async function pingSupabase() {
   const { error } = await supabase.from("heartbeat_logs").insert({});
-  if (error) {
-    console.error("❌ Heartbeat insert failed:", error.message);
-  } else {
-    console.log("✅ Heartbeat logged");
-  }
+  if (error) console.error("❌ Heartbeat insert failed:", error.message);
+  else console.log("✅ Heartbeat logged");
 }
-setInterval(pingSupabase, 60_000); // 60s
-
-// (optional) external uptime monitor can call POST /heartbeat
+setInterval(pingSupabase, 60_000);
 app.post("/heartbeat", async (_req, res) => {
   await pingSupabase();
   res.json({ ok: true });
 });
 
-/* ───────────────────────── Twin routes (unchanged) ─────── */
+/* ─────────────────── Twin routes ────────────────────────── */
 app.post("/twin.register", auth, async (req, res) => {
   const { id, specURL, capabilities = [] } = req.body;
   if (!specURL) return res.status(400).json({ error: "specURL is required" });
@@ -82,8 +68,7 @@ app.post("/twin.register", auth, async (req, res) => {
         createdBy: req.user.id,
         specURL,
         capabilities: capabilities.join(","),
-        eventMeshURL:
-          process.env.MESH_WS || "wss://twin-sync-mesh.onrender.com",
+        eventMeshURL: process.env.MESH_WS || "wss://twin-sync-mesh.onrender.com",
       },
     });
     res.status(201).json({ ...twin, capabilities });
@@ -136,12 +121,12 @@ app.put("/twin/:id", auth, async (req, res) => {
   }
 });
 
-// POST /twin/:id/heartbeat  → updates lastTelemetryAt timestamp
-app.post("/twin/:id/heartbeat", auth, async (req, res) => {
+/* 👇 NEW: per‑twin heartbeat, uses meshAuth */
+app.post("/twin/:id/heartbeat", meshAuth, async (req, res) => {
   try {
     await prisma.twin.update({
-      where: { id_createdBy: { id: req.params.id, createdBy: req.user.id } },
-      data: { lastTelemetryAt: new Date() }
+      where: { id: req.params.id },
+      data: { lastTelemetryAt: new Date() },
     });
     res.json({ ok: true });
   } catch (err) {
@@ -149,7 +134,6 @@ app.post("/twin/:id/heartbeat", auth, async (req, res) => {
     res.status(400).json({ error: "Heartbeat failed", detail: err.message });
   }
 });
-
 
 app.delete("/twin/:id", auth, async (req, res) => {
   try {
